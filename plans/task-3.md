@@ -1,5 +1,6 @@
 # Task 3 Plan — The System Agent
 
+
 ## Goal
 
 Extend the documentation agent with a new `query_api` tool so it can answer questions using:
