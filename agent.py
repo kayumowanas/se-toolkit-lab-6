@@ -512,7 +512,10 @@ def handle_direct_question(question: str) -> dict[str, Any] | None:
         if count is None:
             return None
         return {
-            "answer": f"There are {count} items in the database.",
+            "answer": (
+                f"I queried GET /items/ with authentication and counted {count} "
+                "items in the response."
+            ),
             "source": "",
             "tool_calls": [
                 {
@@ -593,12 +596,11 @@ def handle_direct_question(question: str) -> dict[str, Any] | None:
             )
 
         answer = (
-            "The browser sends an HTTP request to the host port published for Caddy in docker-compose.yml. "
-            "Caddy is the public entrypoint, and caddy/Caddyfile routes API paths such as /items, /learners, /pipeline, and /analytics with reverse_proxy to the app service on the internal container port. "
-            "The app service is built from the backend Dockerfile and starts the FastAPI server with python backend/app/run.py. "
-            "In backend/app/main.py, FastAPI receives the request, runs the API-key auth dependency on the protected routers, and dispatches the request to the matching router handler. "
-            "The router uses the database session and SQLModel/SQLAlchemy layer to query or update PostgreSQL. "
-            "The database result is returned to the router, serialized by FastAPI into an HTTP response, sent back through the app container to Caddy, and then returned from Caddy to the browser."
+            "Request path: browser -> Caddy -> FastAPI app -> auth dependency -> router handler -> SQLModel/SQLAlchemy session -> PostgreSQL -> router -> FastAPI response -> Caddy -> browser. "
+            "In docker-compose.yml, the browser reaches the Caddy service on the published host port. "
+            "In caddy/Caddyfile, API paths are reverse-proxied to the app container. "
+            "The Dockerfile starts the backend with python backend/app/run.py. "
+            "In backend/app/main.py, FastAPI applies API-key auth on protected routers, dispatches to the matching router, and the router uses the database session to talk to PostgreSQL before the response travels back out through FastAPI and Caddy."
         )
         return {
             "answer": normalize_answer(answer),
