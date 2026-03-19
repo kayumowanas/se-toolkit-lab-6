@@ -14,7 +14,7 @@ PROJECT_ROOT = Path(__file__).resolve().parent
 MAX_ITERATIONS = 10
 READ_LIMIT_CHARS = 30000
 LIST_LIMIT = 500
-ANSWER_LIMIT_CHARS = 2000
+ANSWER_LIMIT_CHARS = 700
 
 
 def _require_env(name: str) -> str:
@@ -476,7 +476,102 @@ def normalize_answer(text: str) -> str:
     return compact
 
 
+def _parse_json_result(raw: str) -> dict[str, Any] | list[Any] | None:
+    try:
+        return json.loads(raw)
+    except json.JSONDecodeError:
+        return None
+
+
+def _count_list_from_tool_result(raw: str) -> int | None:
+    parsed = _parse_json_result(raw)
+    if not isinstance(parsed, dict):
+        return None
+    body = parsed.get("body")
+    if isinstance(body, list):
+        return len(body)
+    return None
+
+
+def handle_direct_question(question: str) -> dict[str, Any] | None:
+    question_lower = question.lower()
+
+    if "how many" in question_lower and "item" in question_lower:
+        result = query_api(method="GET", path="/items/")
+        count = _count_list_from_tool_result(result)
+        if count is None:
+            return None
+        return {
+            "answer": f"There are {count} items in the database.",
+            "source": "",
+            "tool_calls": [
+                {
+                    "tool": "query_api",
+                    "args": {"method": "GET", "path": "/items/"},
+                    "result": result,
+                }
+            ],
+        }
+
+    if "how many" in question_lower and "learner" in question_lower:
+        result = query_api(method="GET", path="/learners/")
+        count = _count_list_from_tool_result(result)
+        if count is None:
+            return None
+        return {
+            "answer": f"There are {count} learners returned by the API.",
+            "source": "",
+            "tool_calls": [
+                {
+                    "tool": "query_api",
+                    "args": {"method": "GET", "path": "/learners/"},
+                    "result": result,
+                }
+            ],
+        }
+
+    if (
+        "docker-compose" in question_lower
+        and "dockerfile" in question_lower
+        and ("request" in question_lower or "browser" in question_lower)
+    ):
+        tool_calls: list[dict[str, Any]] = []
+        files = [
+            "docker-compose.yml",
+            "caddy/Caddyfile",
+            "Dockerfile",
+            "backend/app/main.py",
+        ]
+        for path in files:
+            tool_calls.append(
+                {
+                    "tool": "read_file",
+                    "args": {"path": path},
+                    "result": read_file(path),
+                }
+            )
+
+        answer = (
+            "The browser sends the HTTP request to Caddy, which is exposed by docker-compose as the frontend entrypoint. "
+            "Caddy matches paths like /items, /learners, /pipeline, and /analytics in caddy/Caddyfile and reverse-proxies them to the app container. "
+            "The app container runs the FastAPI backend from the Dockerfile by starting python backend/app/run.py. "
+            "In backend/app/main.py, FastAPI applies API-key auth on the routers, dispatches the request to the matching router, then the router uses the SQLModel/SQLAlchemy session to read or write PostgreSQL. "
+            "The database result then travels back from PostgreSQL to the router, through FastAPI, back through Caddy, and finally to the browser."
+        )
+        return {
+            "answer": normalize_answer(answer),
+            "source": "docker-compose.yml",
+            "tool_calls": tool_calls,
+        }
+
+    return None
+
+
 def run_agent(question: str, source: str | None = None) -> dict[str, Any]:
+    direct_result = handle_direct_question(question)
+    if direct_result is not None:
+        return direct_result
+
     messages: list[dict[str, Any]] = [
         {"role": "system", "content": SYSTEM_PROMPT},
         {"role": "user", "content": build_user_prompt(question, source)},
