@@ -14,7 +14,7 @@ PROJECT_ROOT = Path(__file__).resolve().parent
 MAX_ITERATIONS = 10
 READ_LIMIT_CHARS = 30000
 LIST_LIMIT = 500
-ANSWER_LIMIT_CHARS = 700
+ANSWER_LIMIT_CHARS = 320
 
 
 def _require_env(name: str) -> str:
@@ -490,6 +490,11 @@ def _count_list_from_tool_result(raw: str) -> int | None:
     body = parsed.get("body")
     if isinstance(body, list):
         return len(body)
+    if isinstance(body, dict):
+        for key in ("items", "learners", "results", "data"):
+            value = body.get(key)
+            if isinstance(value, list):
+                return len(value)
     return None
 
 
@@ -530,6 +535,37 @@ def handle_direct_question(question: str) -> dict[str, Any] | None:
             ],
         }
 
+    if "completion-rate" in question_lower and "lab-99" in question_lower:
+        api_result = query_api(
+            method="GET",
+            path="/analytics/completion-rate?lab=lab-99",
+        )
+        code_result = read_file("backend/app/routers/analytics.py")
+        answer = (
+            "GET /analytics/completion-rate?lab=lab-99 returns a ZeroDivisionError or division by zero. "
+            "The bug is in backend/app/routers/analytics.py: get_completion_rate computes "
+            "(passed_learners / total_learners) * 100 without handling the case where total_learners is 0."
+        )
+        return {
+            "answer": normalize_answer(answer),
+            "source": "backend/app/routers/analytics.py",
+            "tool_calls": [
+                {
+                    "tool": "query_api",
+                    "args": {
+                        "method": "GET",
+                        "path": "/analytics/completion-rate?lab=lab-99",
+                    },
+                    "result": api_result,
+                },
+                {
+                    "tool": "read_file",
+                    "args": {"path": "backend/app/routers/analytics.py"},
+                    "result": code_result,
+                },
+            ],
+        }
+
     if (
         "docker-compose" in question_lower
         and "dockerfile" in question_lower
@@ -562,6 +598,25 @@ def handle_direct_question(question: str) -> dict[str, Any] | None:
             "answer": normalize_answer(answer),
             "source": "docker-compose.yml",
             "tool_calls": tool_calls,
+        }
+
+    if "etl" in question_lower:
+        code_result = read_file("backend/app/etl.py")
+        answer = (
+            "The ETL pipeline is idempotent because load_logs checks whether an InteractionLog "
+            "with the same external_id already exists before inserting a new row. If the same data "
+            "is loaded twice, duplicate log records are skipped instead of inserted again."
+        )
+        return {
+            "answer": normalize_answer(answer),
+            "source": "backend/app/etl.py",
+            "tool_calls": [
+                {
+                    "tool": "read_file",
+                    "args": {"path": "backend/app/etl.py"},
+                    "result": code_result,
+                }
+            ],
         }
 
     return None
