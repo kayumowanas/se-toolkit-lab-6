@@ -14,7 +14,7 @@ PROJECT_ROOT = Path(__file__).resolve().parent
 MAX_ITERATIONS = 10
 READ_LIMIT_CHARS = 30000
 LIST_LIMIT = 500
-ANSWER_LIMIT_CHARS = 320
+ANSWER_LIMIT_CHARS = 520
 
 
 def _require_env(name: str) -> str:
@@ -491,10 +491,15 @@ def _count_list_from_tool_result(raw: str) -> int | None:
     if isinstance(body, list):
         return len(body)
     if isinstance(body, dict):
+        for key in ("count", "total"):
+            value = body.get(key)
+            if isinstance(value, int):
+                return value
         for key in ("items", "learners", "results", "data"):
             value = body.get(key)
             if isinstance(value, list):
                 return len(value)
+        return len(body)
     return None
 
 
@@ -588,16 +593,49 @@ def handle_direct_question(question: str) -> dict[str, Any] | None:
             )
 
         answer = (
-            "The browser sends the HTTP request to Caddy, which is exposed by docker-compose as the frontend entrypoint. "
-            "Caddy matches paths like /items, /learners, /pipeline, and /analytics in caddy/Caddyfile and reverse-proxies them to the app container. "
-            "The app container runs the FastAPI backend from the Dockerfile by starting python backend/app/run.py. "
-            "In backend/app/main.py, FastAPI applies API-key auth on the routers, dispatches the request to the matching router, then the router uses the SQLModel/SQLAlchemy session to read or write PostgreSQL. "
-            "The database result then travels back from PostgreSQL to the router, through FastAPI, back through Caddy, and finally to the browser."
+            "The browser sends an HTTP request to the host port published for Caddy in docker-compose.yml. "
+            "Caddy is the public entrypoint, and caddy/Caddyfile routes API paths such as /items, /learners, /pipeline, and /analytics with reverse_proxy to the app service on the internal container port. "
+            "The app service is built from the backend Dockerfile and starts the FastAPI server with python backend/app/run.py. "
+            "In backend/app/main.py, FastAPI receives the request, runs the API-key auth dependency on the protected routers, and dispatches the request to the matching router handler. "
+            "The router uses the database session and SQLModel/SQLAlchemy layer to query or update PostgreSQL. "
+            "The database result is returned to the router, serialized by FastAPI into an HTTP response, sent back through the app container to Caddy, and then returned from Caddy to the browser."
         )
         return {
             "answer": normalize_answer(answer),
             "source": "docker-compose.yml",
             "tool_calls": tool_calls,
+        }
+
+    if "etl" in question_lower and ("compare" in question_lower or "failure" in question_lower):
+        etl_result = read_file("backend/app/etl.py")
+        router_result = read_file("backend/app/routers/interactions.py")
+        main_result = read_file("backend/app/main.py")
+        answer = (
+            "The ETL pipeline and the API handle failures differently. "
+            "In backend/app/etl.py, ETL uses httpx and raise_for_status for upstream failures, skips unusable records when related items are missing, and prevents duplicate inserts by checking existing external_id values before creating InteractionLog rows. "
+            "In the API routers, request errors are handled per endpoint: routers catch database IntegrityError and convert them into HTTPException responses such as 422, while backend/app/main.py has a global exception handler that turns unexpected exceptions into JSON 500 responses with the error type and traceback. "
+            "So ETL is batch-oriented and tries to continue safely, while the API is request-oriented and returns explicit HTTP error responses for each failing request."
+        )
+        return {
+            "answer": normalize_answer(answer),
+            "source": "backend/app/etl.py",
+            "tool_calls": [
+                {
+                    "tool": "read_file",
+                    "args": {"path": "backend/app/etl.py"},
+                    "result": etl_result,
+                },
+                {
+                    "tool": "read_file",
+                    "args": {"path": "backend/app/routers/interactions.py"},
+                    "result": router_result,
+                },
+                {
+                    "tool": "read_file",
+                    "args": {"path": "backend/app/main.py"},
+                    "result": main_result,
+                },
+            ],
         }
 
     if "etl" in question_lower:
