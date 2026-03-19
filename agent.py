@@ -14,6 +14,7 @@ PROJECT_ROOT = Path(__file__).resolve().parent
 MAX_ITERATIONS = 10
 READ_LIMIT_CHARS = 30000
 LIST_LIMIT = 500
+ANSWER_LIMIT_CHARS = 2000
 
 
 def _require_env(name: str) -> str:
@@ -173,7 +174,10 @@ TOOLS = [READ_FILE_TOOL, LIST_FILES_TOOL, QUERY_API_TOOL]
 
 
 def list_files(path: str | None = None) -> str:
-    root = PROJECT_ROOT if not path else _safe_resolve(path)
+    try:
+        root = PROJECT_ROOT if not path else _safe_resolve(path)
+    except ValueError as exc:
+        return json.dumps({"error": str(exc)}, ensure_ascii=False)
 
     if not root.exists():
         return json.dumps({"error": f"Path does not exist: {path}"}, ensure_ascii=False)
@@ -307,13 +311,31 @@ def query_api(
 
 def call_tool(name: str, args: dict[str, Any]) -> str:
     if name == "read_file":
-        return read_file(path=args["path"])
+        path = args.get("path")
+        if not isinstance(path, str) or not path:
+            return json.dumps(
+                {"error": "read_file requires a non-empty string path"},
+                ensure_ascii=False,
+            )
+        return read_file(path=path)
     if name == "list_files":
         return list_files(path=args.get("path") or args.get("directory"))
     if name == "query_api":
+        method = args.get("method")
+        path = args.get("path")
+        if not isinstance(method, str) or not method:
+            return json.dumps(
+                {"error": "query_api requires a non-empty string method"},
+                ensure_ascii=False,
+            )
+        if not isinstance(path, str) or not path:
+            return json.dumps(
+                {"error": "query_api requires a non-empty string path"},
+                ensure_ascii=False,
+            )
         return query_api(
-            method=args["method"],
-            path=args["path"],
+            method=method,
+            path=path,
             body=args.get("body"),
             include_auth=args.get("include_auth", True),
         )
@@ -447,6 +469,13 @@ def infer_source_from_tool_history(tool_history: list[dict[str, Any]]) -> str:
     return ""
 
 
+def normalize_answer(text: str) -> str:
+    compact = " ".join(text.split())
+    if len(compact) > ANSWER_LIMIT_CHARS:
+        return compact[: ANSWER_LIMIT_CHARS - 3].rstrip() + "..."
+    return compact
+
+
 def run_agent(question: str, source: str | None = None) -> dict[str, Any]:
     messages: list[dict[str, Any]] = [
         {"role": "system", "content": SYSTEM_PROMPT},
@@ -463,6 +492,7 @@ def run_agent(question: str, source: str | None = None) -> dict[str, Any]:
 
         if not tool_calls:
             final_answer, final_source = parse_final_answer(assistant_content)
+            final_answer = normalize_answer(final_answer)
             if not final_source:
                 final_source = infer_source_from_tool_history(tool_history)
             return {
@@ -515,9 +545,17 @@ def main() -> None:
     if len(sys.argv) < 2:
         raise SystemExit('Usage: uv run agent.py "question" [source]')
 
-    question = sys.argv[1]
-    source = sys.argv[2] if len(sys.argv) > 2 else None
-    result = run_agent(question=question, source=source)
+    try:
+        question = sys.argv[1]
+        source = sys.argv[2] if len(sys.argv) > 2 else None
+        result = run_agent(question=question, source=source)
+    except Exception as exc:  # pragma: no cover
+        result = {
+            "answer": normalize_answer(f"Agent error: {type(exc).__name__}: {exc}"),
+            "source": "",
+            "tool_calls": [],
+        }
+
     print(json.dumps(result, ensure_ascii=False, separators=(",", ":")))
 
 
