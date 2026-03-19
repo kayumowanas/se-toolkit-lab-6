@@ -1,71 +1,69 @@
 # Task 3 Plan — The System Agent
 
-
 ## Goal
 
-Extend the documentation agent with a new `query_api` tool so it can answer questions using:
-- project wiki files,
-- repository source code,
-- the live backend API.
+Extend the existing agent with a new `query_api` tool so it can answer:
 
-The agent will keep the Task 2 agentic loop and add one more tool schema.
+- wiki/documentation questions
+- source-code/system questions
+- live backend/data questions
 
-## New tool: query_api
+## Tool design
 
-The `query_api` tool will call the deployed backend API.
+I will add a `query_api` function-calling tool with:
 
-Parameters:
-- `method` (string) — HTTP method such as GET or POST
-- `path` (string) — API path such as `/items/`
-- `body` (string, optional) — JSON request body
+- `method`: HTTP method such as GET or POST
+- `path`: API path such as `/items/`
+- `body`: optional JSON string for request body
 
-The tool will return a JSON string with:
-- `status_code`
-- `body`
+The tool will:
+
+- read `AGENT_API_BASE_URL` from environment variables
+- default to `http://localhost:42002` if missing
+- read `LMS_API_KEY` from environment variables
+- send the API key in request headers
+- return a JSON string with `status_code` and `body`
 
 ## Authentication
 
-`query_api` will authenticate using `LMS_API_KEY` from environment variables.
+I will use:
 
-The base URL will come from:
-- `AGENT_API_BASE_URL`
-- defaulting to `http://localhost:42002`
+- `LMS_API_KEY` for the backend API
+- `LLM_API_KEY` only for the LLM provider
 
-No values will be hardcoded because the autochecker injects its own configuration.
+I will not hardcode secrets or URLs.
 
-## Tool selection strategy
+## Prompt update
 
-The system prompt will instruct the LLM to:
-- use `read_file` and `list_files` for wiki and source code questions,
-- use `query_api` for live system and data questions,
-- combine `query_api` and `read_file` for bug diagnosis questions,
-- always keep answers grounded in tool results.
+I will update the system prompt so the agent:
 
-## Agent loop
+- uses `read_file` for source code and wiki details
+- uses `list_files` to discover relevant files/modules
+- uses `query_api` for live system facts and data-dependent queries
 
-The Task 2 loop will be reused:
-1. send messages + tool schemas to the LLM,
-2. execute any tool calls,
-3. append tool results,
-4. continue until final answer,
-5. stop after a maximum number of tool calls.
+## Benchmark strategy
 
-## Benchmark plan
+First I will run `uv run run_eval.py` once.
+Then I will record:
 
-I will run `uv run run_eval.py` after implementing `query_api`.
+- initial score
+- first failing questions
+- likely cause
+- fix strategy
 
-Initial benchmark score:
-- not run yet
+## Iteration notes
 
-Expected likely failures:
-- wrong tool selection
-- incomplete source diagnosis
-- missing API authentication
-- content truncation when reading large files
+Initial score: not run yet in this workspace snapshot
+First failures: unknown until `run_eval.py` is executed with valid autochecker credentials
+Fix strategy:
 
-Iteration strategy:
-1. run the benchmark,
-2. inspect the first failing question,
-3. improve tool descriptions or the system prompt,
-4. fix any implementation bugs,
-5. repeat until all 10 local questions pass.
+- first make the output contract stable: `answer`, optional `source`, `tool_calls`
+- add a deterministic mock LLM mode so regression tests do not depend on a real provider
+- keep `read_file` and `list_files` compatible with Task 2 while extending the agent with `query_api`
+- improve the system prompt so the model distinguishes:
+  - wiki/documentation questions
+  - source-code questions
+  - live API and runtime-error questions
+- run the benchmark question by question, starting with the first failing index
+- if the model chooses the wrong tool, tighten the tool descriptions and add clearer prompt rules
+- if the answer is correct but misses a keyword, make the final answer wording more explicit
