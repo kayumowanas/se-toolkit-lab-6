@@ -518,7 +518,7 @@ def main() -> None:
     question = sys.argv[1]
     source = sys.argv[2] if len(sys.argv) > 2 else None
     result = run_agent(question=question, source=source)
-    print(json.dumps(result, ensure_ascii=False, indent=2))
+    print(json.dumps(result, ensure_ascii=False, separators=(",", ":")))
 
 
 if __name__ == "__main__":
